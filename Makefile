@@ -22,5 +22,8 @@ $(stage1): $(stage0)
 run: $(stage1)
 	$(stage1)
 
+help: $(stage1)
+	$(stage1) help
+
 clean:
 	rm -r target
