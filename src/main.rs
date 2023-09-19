@@ -1,16 +1,11 @@
-#[cfg(not(stage1))]
-use freight::{CrateType, Edition, Rustc};
-#[cfg(not(stage1))]
-use std::{fs, path::PathBuf};
-#[cfg(not(stage1))]
-const BOOTSTRAP_STAGE1: &str = "bootstrap_stage1";
-
 use std::error::Error;
 
 pub fn main() -> Result<(), Box<dyn Error>> {
-    println!("Hello from freight!");
     #[cfg(not(stage1))]
     {
+        use freight::{CrateType, Edition, Rustc};
+        use std::{fs, path::PathBuf};
+        const BOOTSTRAP_STAGE1: &str = "bootstrap_stage1";
         let target_dir = PathBuf::from("target");
         let bootstrap_dir = target_dir.join(BOOTSTRAP_STAGE1);
         fs::create_dir_all(&bootstrap_dir)?;
