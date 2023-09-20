@@ -18,5 +18,7 @@ $(output): $(bootstrap)
 help: $(output)
 	$(output) help
 
+run: help
+
 clean:
 	rm -r target
