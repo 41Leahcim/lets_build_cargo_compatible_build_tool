@@ -6,16 +6,17 @@ use std::{
     fs,
     path::PathBuf,
     process::Command,
+    str::FromStr,
 };
 
 mod config;
 
-pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
+pub type Result<T> = std::result::Result<T, BoxError>;
+pub type BoxError = Box<dyn Error>;
 
 pub fn build() -> Result<()> {
     let root_dir = root_dir()?;
 
-    // TODO: Get this from a config file
     let manifest = Manifest::parse_from_file(root_dir.join("Freight.toml"))?;
 
     let lib_rs = root_dir.join("src").join("lib.rs");
@@ -82,6 +83,19 @@ impl Display for Edition {
             Self::E2021 => "2021",
         };
         write!(f, "{edition}")
+    }
+}
+
+impl FromStr for Edition {
+    type Err = BoxError;
+
+    fn from_str(input: &str) -> Result<Self> {
+        match input {
+            "2015" => Ok(Self::E2015),
+            "2018" => Ok(Self::E2018),
+            "2021" => Ok(Self::E2021),
+            edition => Err(format!("Edition {edition} is not supported").into()),
+        }
     }
 }
 
