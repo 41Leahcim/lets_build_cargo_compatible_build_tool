@@ -10,9 +10,11 @@ use std::{
 
 mod config;
 mod logger;
-mod rustc;
+pub mod rustc;
+mod rustdoc;
 
 use rustc::{CrateType, Rustc};
+use rustdoc::RustDoc;
 
 pub type Result<T> = std::result::Result<T, BoxError>;
 pub type BoxError = Box<dyn Error>;
@@ -23,7 +25,7 @@ fn lib_compile(
     lib_path: &Path,
     out_dir: &Path,
 ) -> Result<()> {
-    logger.compiling_crate(&manifest.crate_name);
+    logger.compiling_crate(&manifest.crate_name)?;
     Rustc::builder()
         .edition(manifest.edition)
         .crate_type(CrateType::Lib)
@@ -32,7 +34,6 @@ fn lib_compile(
         .lib_dir(out_dir)
         .done()
         .run(lib_path.to_str().unwrap())?;
-    logger.done_compiling();
     Ok(())
 }
 
@@ -43,7 +44,7 @@ fn bin_compile(
     out_dir: &Path,
     externs: &[&str],
 ) -> Result<()> {
-    logger.compiling_bin(&manifest.crate_name);
+    logger.compiling_bin(&manifest.crate_name)?;
     let mut builder = Rustc::builder()
         .edition(manifest.edition)
         .crate_type(CrateType::Bin)
@@ -56,7 +57,6 @@ fn bin_compile(
     }
 
     builder.done().run(bin_path.to_str().unwrap())?;
-    logger.done_compiling();
     Ok(())
 }
 
@@ -95,13 +95,11 @@ pub fn build() -> Result<()> {
 }
 
 fn test_compile(
-    logger: &mut Logger,
     manifest: &Manifest,
     bin_path: &Path,
     out_dir: &Path,
     externs: &[&str],
 ) -> Result<()> {
-    logger.compiling_bin(&manifest.crate_name);
     let mut builder = Rustc::builder()
         .edition(manifest.edition)
         .crate_type(CrateType::Bin)
@@ -118,7 +116,6 @@ fn test_compile(
         builder = builder.externs(*ex);
     }
     builder.done().run(bin_path.to_str().unwrap())?;
-    logger.done_compiling();
     Ok(())
 }
 
@@ -135,36 +132,45 @@ pub fn build_tests() -> Result<()> {
 
     match (lib_rs.exists(), main_rs.exists()) {
         (true, true) => {
-            test_compile(&mut logger, &manifest, &lib_rs, &target_tests, &[])?;
+            test_compile(&manifest, &lib_rs, &target_tests, &[])?;
             lib_compile(&mut logger, &manifest, &lib_rs, &target_tests)?;
-            test_compile(
-                &mut logger,
-                &manifest,
-                &main_rs,
-                &target_tests,
-                &[&manifest.crate_name],
-            )?;
+            test_compile(&manifest, &main_rs, &target_tests, &[&manifest.crate_name])?;
         }
-        (true, false) => test_compile(&mut logger, &manifest, &lib_rs, &target_tests, &[])?,
-        (false, true) => bin_compile(&mut logger, &manifest, &main_rs, &target_tests, &[])?,
+        (true, false) => test_compile(&manifest, &lib_rs, &target_tests, &[])?,
+        (false, true) => test_compile(&manifest, &main_rs, &target_tests, &[])?,
         (false, false) => return Err("There is nothing to compile".into()),
     };
     Ok(())
 }
 
 pub fn run_tests(test_args: Vec<String>) -> Result<()> {
-    for item in root_dir()?
-        .join("target")
-        .join("debug")
-        .join("tests")
-        .read_dir()?
-    {
+    let mut logger = Logger::new();
+    let root = root_dir()?;
+    let manifest = Manifest::parse_from_file(root.join("Freight.toml"))?;
+    for item in root.join("target").join("debug").join("tests").read_dir()? {
         let item = item?;
         let path = item.path();
         let is_test = path.extension().is_none();
         if is_test {
+            let file_name = path.file_name().unwrap();
+            if file_name == "test_freight_main" {
+                logger.main_unit_test()?;
+            } else if file_name == "test_freight_lib" {
+                logger.lib_unit_test()?;
+            }
             Command::new(path).args(&test_args).spawn()?.wait()?;
         }
+    }
+
+    let lib = root.join("src").join("lib.rs");
+    if lib.exists() {
+        logger.doc_test(&manifest.crate_name)?;
+        RustDoc::new(
+            manifest.edition,
+            manifest.crate_name,
+            root.join("target").join("debug"),
+        )
+        .test(lib)?;
     }
     Ok(())
 }

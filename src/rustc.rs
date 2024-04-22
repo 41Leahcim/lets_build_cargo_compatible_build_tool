@@ -1,8 +1,9 @@
-use core::{
+use std::{
     fmt::{self, Display},
+    path::PathBuf,
+    process::Command,
     str::FromStr,
 };
-use std::{path::PathBuf, process::Command};
 
 use super::{BoxError, Result};
 
@@ -123,6 +124,20 @@ impl Rustc {
         Ok(())
     }
 
+    /// Create a builder type to build up commands to then invoke rustc with.
+    /// ```
+    /// # use std::error::Error;
+    /// # use freight::rustc::{Rustc, Edition, CrateType};
+    /// # fn main() -> Result<(), Box<dyn Error>>{
+    ///     let builder = Rustc::builder()
+    ///         .edition(Edition::E2021)
+    ///         .crate_type(CrateType::Bin)
+    ///         .crate_name("freight")
+    ///         .out_dir(".")
+    ///         .lib_dir(".");
+    /// #    Ok(())
+    /// # }
+    /// ```
     pub fn builder() -> RustcBuilder {
         RustcBuilder::default()
     }
