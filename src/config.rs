@@ -1,4 +1,4 @@
-use super::{BoxError, Edition, Result};
+use crate::{rustc::Edition, BoxError, Result};
 use std::{fs, path::Path, str::FromStr};
 
 pub struct Manifest {
