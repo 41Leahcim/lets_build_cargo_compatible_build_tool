@@ -12,6 +12,10 @@ run: $(output)
 
 test: $(output)
 	mkdir -p target/test
+	@# Test that we can pass args to the tests
+	$(output) test ignored-arg -- --list
+	
+	@# Actually run tests
 	$(output) test
 
 clean:

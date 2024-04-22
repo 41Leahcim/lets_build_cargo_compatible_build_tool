@@ -8,7 +8,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         Some("build") => freight::build()?,
         Some("test") => {
             freight::build_tests()?;
-            freight::run_tests()?
+            args.by_ref()
+                .take_while(|arg| *arg != "--")
+                .for_each(|_| {});
+            freight::run_tests(args.collect::<Vec<String>>())?
         }
         Some("help") => println!("{HELP}"),
         _ => {
