@@ -1,2 +1,2 @@
 #!/bin/sh
-make clean run
+make clean run test

@@ -12,3 +12,7 @@ jobs:
     - name: "Build and run Freight"
       run: "make help"
       shell: bash
+    
+    - name: "Build and test Freight"
+      run: "make test"
+      shell: bash

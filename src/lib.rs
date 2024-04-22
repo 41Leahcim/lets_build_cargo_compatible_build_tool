@@ -5,7 +5,7 @@ use std::{
     error::Error,
     fmt::{self, Display},
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     str::FromStr,
 };
@@ -16,62 +16,159 @@ mod logger;
 pub type Result<T> = std::result::Result<T, BoxError>;
 pub type BoxError = Box<dyn Error>;
 
+fn lib_compile(
+    logger: &mut Logger,
+    manifest: &Manifest,
+    lib_path: &Path,
+    out_dir: &Path,
+) -> Result<()> {
+    logger.compiling_crate(&manifest.crate_name);
+    Rustc::builder()
+        .edition(manifest.edition)
+        .crate_type(CrateType::Lib)
+        .crate_name(&manifest.crate_name)
+        .out_dir(out_dir)
+        .lib_dir(out_dir)
+        .done()
+        .run(lib_path.to_str().unwrap())?;
+    logger.done_compiling();
+    Ok(())
+}
+
+fn bin_compile(
+    logger: &mut Logger,
+    manifest: &Manifest,
+    bin_path: &Path,
+    out_dir: &Path,
+    externs: &[&str],
+) -> Result<()> {
+    logger.compiling_bin(&manifest.crate_name);
+    let mut builder = Rustc::builder()
+        .edition(manifest.edition)
+        .crate_type(CrateType::Bin)
+        .crate_name(&manifest.crate_name)
+        .out_dir(out_dir)
+        .lib_dir(out_dir);
+
+    for ex in externs {
+        builder = builder.externs(*ex);
+    }
+
+    builder.done().run(bin_path.to_str().unwrap())?;
+    logger.done_compiling();
+    Ok(())
+}
+
 pub fn build() -> Result<()> {
     let mut logger = Logger::new();
     let root_dir = root_dir()?;
-
     let manifest = Manifest::parse_from_file(root_dir.join("Freight.toml"))?;
-
     let lib_rs = root_dir.join("src").join("lib.rs");
     let main_rs = root_dir.join("src").join("main.rs");
     let target = root_dir.join("target");
     let target_debug = target.join("debug");
     fs::create_dir_all(&target_debug)?;
 
-    let lib_compile = |logger: &mut Logger| -> Result<()> {
-        logger.compiling_crate(&manifest.crate_name);
-        Rustc::builder()
-            .edition(manifest.edition)
-            .crate_type(CrateType::Lib)
-            .crate_name(&manifest.crate_name)
-            .out_dir(target_debug.clone())
-            .lib_dir(target_debug.clone())
-            .done()
-            .run(lib_rs.to_str().unwrap())?;
-        logger.done_compiling();
-        Ok(())
-    };
-
-    let bin_compile = |logger: &mut Logger, externs: Vec<&str>| -> Result<()> {
-        logger.compiling_bin(&manifest.crate_name);
-        let mut builder = Rustc::builder()
-            .edition(manifest.edition)
-            .crate_type(CrateType::Bin)
-            .crate_name(&manifest.crate_name)
-            .out_dir(target_debug.clone())
-            .lib_dir(target_debug.clone());
-
-        for ex in externs {
-            builder = builder.externs(ex);
-        }
-
-        builder.done().run(main_rs.to_str().unwrap())?;
-        println!("Compiling main.rs -- Done");
-        Ok(())
-    };
     match (lib_rs.exists(), main_rs.exists()) {
         (true, true) => {
-            lib_compile(&mut logger)?;
-            bin_compile(&mut logger, vec![&manifest.crate_name])?;
+            lib_compile(&mut logger, &manifest, &lib_rs, &target_debug)?;
+            bin_compile(
+                &mut logger,
+                &manifest,
+                &main_rs,
+                &target_debug,
+                &[&manifest.crate_name],
+            )?;
         }
-        (true, false) => lib_compile(&mut logger)?,
-        (false, true) => bin_compile(&mut logger, vec![])?,
+        (true, false) => lib_compile(&mut logger, &manifest, &lib_rs, &target_debug)?,
+        (false, true) => bin_compile(
+            &mut logger,
+            &manifest,
+            &main_rs,
+            &target_debug,
+            &[&manifest.crate_name],
+        )?,
         (false, false) => return Err("There is nothing to compile".into()),
     };
     Ok(())
 }
 
-#[derive(Clone, Copy)]
+fn test_compile(
+    logger: &mut Logger,
+    manifest: &Manifest,
+    bin_path: &Path,
+    out_dir: &Path,
+    externs: &[&str],
+) -> Result<()> {
+    logger.compiling_bin(&manifest.crate_name);
+    let mut builder = Rustc::builder()
+        .edition(manifest.edition)
+        .crate_type(CrateType::Bin)
+        .crate_name(format!(
+            "test_{}_{}",
+            &manifest.crate_name,
+            bin_path.file_stem().unwrap().to_str().unwrap()
+        ))
+        .out_dir(out_dir)
+        .lib_dir(out_dir)
+        .test(true);
+
+    for ex in externs {
+        builder = builder.externs(*ex);
+    }
+    builder.done().run(bin_path.to_str().unwrap())?;
+    logger.done_compiling();
+    Ok(())
+}
+
+pub fn build_tests() -> Result<()> {
+    let mut logger = Logger::new();
+    let root_dir = root_dir()?;
+    let manifest = Manifest::parse_from_file(root_dir.join("Freight.toml"))?;
+
+    let lib_rs = root_dir.join("src").join("lib.rs");
+    let main_rs = root_dir.join("src").join("main.rs");
+    let target = root_dir.join("target");
+    let target_tests = target.join("debug").join("tests");
+    fs::create_dir_all(&target_tests)?;
+
+    match (lib_rs.exists(), main_rs.exists()) {
+        (true, true) => {
+            test_compile(&mut logger, &manifest, &lib_rs, &target_tests, &[])?;
+            lib_compile(&mut logger, &manifest, &lib_rs, &target_tests)?;
+            test_compile(
+                &mut logger,
+                &manifest,
+                &main_rs,
+                &target_tests,
+                &[&manifest.crate_name],
+            )?;
+        }
+        (true, false) => test_compile(&mut logger, &manifest, &lib_rs, &target_tests, &[])?,
+        (false, true) => bin_compile(&mut logger, &manifest, &main_rs, &target_tests, &[])?,
+        (false, false) => return Err("There is nothing to compile".into()),
+    };
+    Ok(())
+}
+
+pub fn run_tests() -> Result<()> {
+    for item in root_dir()?
+        .join("target")
+        .join("debug")
+        .join("tests")
+        .read_dir()?
+    {
+        let item = item?;
+        let path = item.path();
+        let is_test = path.extension().is_none();
+        if is_test {
+            Command::new(path).spawn()?.wait()?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edition {
     E2015,
     E2018,
@@ -102,6 +199,7 @@ impl FromStr for Edition {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrateType {
     Bin,
     Lib,
@@ -110,6 +208,23 @@ pub enum CrateType {
     CDyLib,
     StaticLib,
     ProcMacro,
+}
+
+impl FromStr for CrateType {
+    type Err = BoxError;
+
+    fn from_str(input: &str) -> Result<Self> {
+        match input {
+            "bin" => Ok(Self::Bin),
+            "lib" => Ok(Self::Lib),
+            "rlib" => Ok(Self::RLib),
+            "dylib" => Ok(Self::DyLib),
+            "cdylib" => Ok(Self::CDyLib),
+            "staticlib" => Ok(Self::StaticLib),
+            "proc-macro" => Ok(Self::ProcMacro),
+            crate_type => Err(format!("Crate Type {crate_type} is not supported").into()),
+        }
+    }
 }
 
 impl Display for CrateType {
@@ -145,6 +260,7 @@ pub struct Rustc {
     lib_dir: PathBuf,
     cfg: Vec<String>,
     externs: Vec<String>,
+    test: bool,
 }
 
 impl Rustc {
@@ -173,6 +289,7 @@ impl Rustc {
                     .map(|cfg| ["--cfg".into(), cfg])
                     .flatten(),
             )
+            .args(if self.test { vec!["--test"] } else { vec![] })
             .spawn()?
             .wait()?;
         Ok(())
@@ -192,6 +309,7 @@ pub struct RustcBuilder {
     lib_dir: Option<PathBuf>,
     cfg: Vec<String>,
     externs: Vec<String>,
+    test: bool,
 }
 
 impl RustcBuilder {
@@ -230,6 +348,11 @@ impl RustcBuilder {
         self
     }
 
+    pub fn test(mut self, test: bool) -> Self {
+        self.test = test;
+        self
+    }
+
     pub fn done(self) -> Rustc {
         Rustc {
             edition: self.edition.unwrap_or(Edition::E2015),
@@ -239,6 +362,43 @@ impl RustcBuilder {
             lib_dir: self.lib_dir.expect("Lib dir given"),
             cfg: self.cfg,
             externs: self.externs,
+            test: self.test,
         }
     }
+}
+
+#[test]
+fn edition_from_str() -> Result<()> {
+    let e2015 = Edition::from_str("2015")?;
+    assert_eq!(e2015, Edition::E2015);
+    let e2018 = Edition::from_str("2018")?;
+    assert_eq!(e2018, Edition::E2018);
+    let e2021 = Edition::from_str("2021")?;
+    assert_eq!(e2021, Edition::E2021);
+    if Edition::from_str("\"2015\"").is_ok() {
+        panic!("Bad string parsed correctly");
+    }
+    Ok(())
+}
+
+#[test]
+fn crate_type_from_str() -> Result<()> {
+    let bin = CrateType::from_str("bin")?;
+    assert_eq!(bin, CrateType::Bin);
+    let lib = CrateType::from_str("lib")?;
+    assert_eq!(lib, CrateType::Lib);
+    let rlib = CrateType::from_str("rlib")?;
+    assert_eq!(rlib, CrateType::RLib);
+    let dylib = CrateType::from_str("dylib")?;
+    assert_eq!(dylib, CrateType::DyLib);
+    let cdylib = CrateType::from_str("cdylib")?;
+    assert_eq!(cdylib, CrateType::CDyLib);
+    let staticlib = CrateType::from_str("staticlib")?;
+    assert_eq!(staticlib, CrateType::StaticLib);
+    let proc_macro = CrateType::from_str("proc-macro")?;
+    assert_eq!(proc_macro, CrateType::ProcMacro);
+    if CrateType::from_str("proc-marco").is_ok() {
+        panic!("Bad string parsed correctly");
+    }
+    Ok(())
 }
